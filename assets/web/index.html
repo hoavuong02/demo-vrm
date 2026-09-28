@@ -1,0 +1,329 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>VRM Viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1d2330; overflow: hidden; font-family: -apple-system, sans-serif; }
+  canvas { display: block; }
+  #status { position: fixed; top: 10px; left: 10px; color: #fff; font-size: 13px; background: #0008; padding: 6px 10px; border-radius: 6px; }
+  #panel { position: fixed; right: 10px; top: 10px; bottom: 10px; width: 220px; overflow: auto; background: #000a; color: #fff; padding: 10px; border-radius: 8px; font-size: 12px; display: none; }
+  #panel h4 { margin: 8px 0 4px; }
+  #panel button { margin: 2px; padding: 4px 8px; border: 0; border-radius: 4px; background: #3b82f6; color: #fff; cursor: pointer; }
+  #panel label { display: flex; justify-content: space-between; align-items: center; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+  "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.3.3/lib/three-vrm.module.min.js"
+} }
+</script>
+</head>
+<body>
+<div id="status">Loading…</div>
+<div id="panel"></div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+const status = document.getElementById('status');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1d2330);
+const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.1, 50);
+camera.position.set(0, 1.3, 3.2);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.0, 0);
+controls.enableDamping = true;
+controls.update();
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const light = new THREE.DirectionalLight(0xffffff, 2.2);
+light.position.set(1, 2, 2);
+scene.add(light);
+scene.add(new THREE.GridHelper(10, 20, 0x445066, 0x2c3444));
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// Messages to Flutter (no-op when opened in a plain browser)
+function post(type, data) {
+  const msg = JSON.stringify({ type, data });
+  if (window.flutter_inappwebview?.callHandler) window.flutter_inappwebview.callHandler('vrm', msg);
+  else console.log('[vrm]', msg);
+}
+
+let vrm = null;
+const state = {
+  action: 'idle',       // current body action
+  actionTime: 0,
+  autoBlink: true,
+  lipSync: false,
+  lookAtCamera: true,
+  manual: {},           // manual expression weights set from UI
+};
+const ACTIONS = ['idle', 'wave', 'nod', 'shake', 'bow', 'dance', 'jump', 'think', 'tpose'];
+
+const loader = new GLTFLoader().register((p) => new VRMLoaderPlugin(p));
+let isVrm0 = false;
+// Non-VRM glTF (animals, objects…): plays the clips embedded in the file.
+let plain = null; // { scene, mixer, clips: {name: AnimationAction}, current, morphs: [{mesh, index, name}] }
+
+function showPlainGltf(gltf, url) {
+  const root = gltf.scene;
+  // Normalise size: fit into ~1.6m tall, standing on the grid.
+  const box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3());
+  const k = 1.6 / Math.max(size.x, size.y, size.z);
+  root.scale.setScalar(k);
+  box.setFromObject(root);
+  const c = box.getCenter(new THREE.Vector3());
+  root.position.set(-c.x, -box.min.y, -c.z);
+  scene.add(root);
+
+  const mixer = new THREE.AnimationMixer(root);
+  const clips = {};
+  gltf.animations.forEach((clip, i) => { clips[clip.name || `Animation ${i + 1}`] = mixer.clipAction(clip); });
+  const clipNames = Object.keys(clips);
+  // Morph targets that are not just frames of an animation become "expressions".
+  const morphs = [];
+  root.traverse((o) => {
+    if (!o.morphTargetDictionary) return;
+    for (const [name, index] of Object.entries(o.morphTargetDictionary)) {
+      if (!gltf.animations.some((a) => a.name && name.startsWith(a.name))) morphs.push({ mesh: o, index, name });
+    }
+  });
+  plain = { scene: root, mixer, clips, current: null, morphs };
+  if (clipNames.length) playClip(clipNames.find((n) => /idle|survey/i.test(n)) ?? clipNames[0]);
+
+  // Frame what the animation actually covers (e.g. a box whose lid opens).
+  const covered = new THREE.Box3(), dur = plain.current?.getClip().duration ?? 0;
+  for (let i = 0; i <= 8; i++) {
+    mixer.setTime(dur * i / 8);
+    root.updateMatrixWorld(true);
+    covered.union(new THREE.Box3().setFromObject(root, true));
+  }
+  mixer.setTime(0);
+  const sphere = covered.getBoundingSphere(new THREE.Sphere());
+  const dist = sphere.radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.1;
+  const dir = new THREE.Vector3(0.6, 0.35, 1).normalize();
+  home = { pos: sphere.center.clone().addScaledVector(dir, dist), target: sphere.center.clone() };
+  vrmApi.resetCamera();
+  const name = decodeURIComponent(url.split('/').pop()).replace(/\.(glb|gltf)$/i, '');
+  status.textContent = `${name} · glTF · ${clipNames.length} animations`;
+  const expressions = [...new Set(morphs.map((m) => m.name))];
+  post('loaded', { name, version: 'glTF', meta: { author: '-' }, expressions, actions: clipNames });
+  buildPanel(expressions, clipNames);
+}
+
+function playClip(name) {
+  const next = plain.clips[name];
+  if (!next) return;
+  if (plain.current && plain.current !== next) plain.current.fadeOut(0.3);
+  next.reset().fadeIn(0.3).play();
+  plain.current = next;
+}
+
+function loadModel(url) {
+  status.textContent = 'Loading…';
+  loader.load(url, (gltf) => {
+    if (vrm) { scene.remove(vrm.scene); VRMUtils.deepDispose(vrm.scene); vrm = null; }
+    if (plain) { scene.remove(plain.scene); VRMUtils.deepDispose(plain.scene); plain = null; }
+    if (!gltf.userData.vrm) return showPlainGltf(gltf, url);
+    vrm = gltf.userData.vrm;
+    isVrm0 = vrm.meta?.metaVersion === '0';
+    // Match Flutter, which resets its chip to idle on load; the old pose belongs to the disposed model.
+    state.action = 'idle'; state.actionTime = 0; state.from = null;
+    VRMUtils.combineSkeletons(gltf.scene);
+    VRMUtils.rotateVRM0(vrm); // VRM 0.x faces -Z, turn it toward camera
+    scene.add(vrm.scene);
+    if (vrm.lookAt) vrm.lookAt.target = state.lookAtCamera ? camera : null;
+    frameModel();
+    const expressions = Object.keys(vrm.expressionManager?.expressionMap ?? {});
+    const name = vrm.meta?.name ?? vrm.meta?.title ?? 'VRM';
+    status.textContent = `${name} · VRM ${isVrm0 ? '0.x' : '1.0'}`;
+    post('loaded', { name, version: isVrm0 ? '0.x' : '1.0', meta: vrm.meta, expressions, actions: ACTIONS });
+    buildPanel(expressions);
+  },
+  (xhr) => { if (xhr.total) status.textContent = `Loading ${(xhr.loaded / xhr.total * 100).toFixed(0)}%`; },
+  (err) => { status.textContent = 'Error: ' + (err.message ?? err); post('error', String(err.message ?? err)); });
+}
+loadModel(new URLSearchParams(location.search).get('model') ?? 'model.vrm');
+
+// Fit camera to the model's height (models vary in scale/origin)
+let home = null;
+function frameModel() {
+  vrm.scene.updateMatrixWorld(true);
+  const y = (n) => vrm.humanoid.getNormalizedBoneNode(n).getWorldPosition(new THREE.Vector3()).y;
+  const top = y('head') + 0.3, bottom = Math.min(y('leftFoot'), 0);
+  const c = new THREE.Vector3(0, (top + bottom) / 2, 0);
+  const dist = (top - bottom) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.1;
+  home = { pos: new THREE.Vector3(0, c.y, dist), target: c.clone() };
+  camera.position.copy(home.pos); controls.target.copy(home.target); controls.update();
+}
+
+// ---------- Public API (called from Flutter via evaluateJavascript) ----------
+window.vrmApi = {
+  loadModel(url) { state.manual = {}; loadModel(url); },
+  setExpression(name, value) {
+    state.manual[name] = value;
+    plain?.morphs.filter((m) => m.name === name).forEach((m) => { m.mesh.morphTargetInfluences[m.index] = value; });
+  },
+  resetExpressions() { state.manual = {}; plain?.morphs.forEach((m) => { m.mesh.morphTargetInfluences[m.index] = 0; }); },
+  playAction(name) { if (plain) return playClip(name); startAction(name); },
+  setAutoBlink(v) { state.autoBlink = v; },
+  setLipSync(v) { state.lipSync = v; },
+  setLookAt(v) { state.lookAtCamera = v; if (vrm?.lookAt) vrm.lookAt.target = v ? camera : null; },
+  resetCamera() { if (home) { camera.position.copy(home.pos); controls.target.copy(home.target); } },
+};
+
+// ---------- Body actions (procedural, on humanoid bones) ----------
+const bone = (n) => vrm.humanoid.getNormalizedBoneNode(n);
+// Poses are authored for VRM1 bone space (model faces +Z, left arm on +X); rotateVRM0 turns VRM0 models 180deg around Y, so X/Z flip there.
+const R = (n, x = 0, y = 0, z = 0) => { const b = bone(n); if (b) isVrm0 ? b.rotation.set(-x, y, -z) : b.rotation.set(x, y, z); };
+const BONES = ['hips','spine','chest','neck','head','leftUpperArm','rightUpperArm','leftLowerArm','rightLowerArm',
+  'leftHand','rightHand','leftUpperLeg','rightUpperLeg','leftLowerLeg','rightLowerLeg','leftFoot','rightFoot'];
+const BLEND = 0.3; // seconds to blend from the previous pose into a new action
+
+function startAction(name) {
+  if (vrm) state.from = { q: BONES.map((n) => bone(n)?.quaternion.clone()), y: bone('hips').position.y };
+  state.action = name; state.actionTime = 0;
+}
+
+function applyAction(t) {
+  for (const n of BONES) R(n);
+  const hips = bone('hips');
+  hips.userData.baseY ??= hips.position.y;
+  hips.userData.legLen ??= bone('leftLowerLeg').position.length() + bone('leftFoot').position.length();
+  // Height of the lower foot relative to the hips, measured on the current pose.
+  const footY = () => {
+    hips.updateMatrixWorld(true);
+    const y = (n) => bone(n).getWorldPosition(new THREE.Vector3()).y;
+    return Math.min(y('leftFoot'), y('rightFoot')) - y('hips');
+  };
+  hips.userData.restFootY ??= footY();
+  let lift = 0; // vertical hips offset for jump/dance
+  const s = Math.sin;
+  // Bend the knees so the hips drop by about d; lift then keeps the lower foot on the floor. kl/kr additionally raise a leg.
+  const legs = (d, kl = 0, kr = 0) => {
+    const a = Math.acos(1 - Math.min(d / hips.userData.legLen, 1));
+    for (const [side, k] of [['left', kl], ['right', kr]]) {
+      R(side + 'UpperLeg', -a - k * 0.4); R(side + 'LowerLeg', 2 * a + k * 0.8); R(side + 'Foot', -a);
+    }
+    lift = hips.userData.restFootY - footY();
+  };
+  // Base relaxed arms + breathing, used by most actions
+  const base = () => {
+    R('leftUpperArm', 0, 0, -1.2); R('rightUpperArm', 0, 0, 1.2);
+    R('chest', s(t * 2) * 0.02);
+  };
+  switch (state.action) {
+    case 'tpose': break;
+    case 'idle':
+      base(); R('spine', 0, 0, s(t * 0.8) * 0.03); R('head', 0, s(t * 0.5) * 0.1, 0);
+      break;
+    case 'wave':
+      // Twist the upper arm so the palm faces forward, then bend the elbow up and swing the forearm side to side.
+      base(); R('rightUpperArm', -Math.PI / 2, -0.4, 0.3); R('rightLowerArm', 0, 1.4 + s(t * 8) * 0.35);
+      R('head', 0, 0, s(t * 2) * 0.08);
+      break;
+    case 'nod':
+      base(); R('head', Math.abs(s(t * 5)) * 0.35);
+      break;
+    case 'shake':
+      base(); R('head', 0, s(t * 8) * 0.4);
+      break;
+    case 'bow': {
+      base(); const k = Math.min(1, s(Math.min(t, Math.PI) ) * 1.2);
+      R('spine', k * 0.6); R('chest', k * 0.2); R('head', k * 0.2);
+      if (t > Math.PI) { startAction('idle'); post('action', 'idle'); }
+      break;
+    }
+    case 'dance':
+      legs(Math.abs(s(t * 8)) * 0.04, Math.max(0, s(t * 8)), Math.max(0, -s(t * 8)));
+      R('leftUpperArm', 0, 0, -0.4 + s(t * 8) * 0.5); R('rightUpperArm', 0, 0, 0.4 + s(t * 8) * 0.5);
+      R('leftLowerArm', 0, -1.2); R('rightLowerArm', 0, 1.2);
+      // Twist the spine rather than the hips so the feet stay planted.
+      R('spine', 0, s(t * 4) * 0.3, s(t * 4) * 0.15); R('head', 0, 0, -s(t * 4) * 0.2);
+      break;
+    case 'jump': {
+      base(); const p = (t % 1.2) / 1.2;
+      if (p < 0.2) legs(s(p / 0.2 * Math.PI) * 0.1); // crouch, then push off
+      else lift = s((p - 0.2) / 0.8 * Math.PI) * 0.35;
+      // Arms only swing up; lowering them past the relaxed pose pushes them into the body.
+      R('leftUpperArm', 0, 0, -1.2 + Math.max(0, lift) * 5); R('rightUpperArm', 0, 0, 1.2 - Math.max(0, lift) * 5);
+      break;
+    }
+    case 'think':
+      R('leftUpperArm', 0, 0, -1.2); R('rightUpperArm', -0.8, 0.6, 1.6); R('rightLowerArm', 0, 2.2, 0); R('rightHand', 0, 0, 0.4);
+      R('head', 0.1, 0, 0.2 + s(t) * 0.05);
+      break;
+  }
+  hips.position.y = hips.userData.baseY + lift;
+  if (state.from && t < BLEND) {
+    const w = THREE.MathUtils.smoothstep(t, 0, BLEND);
+    BONES.forEach((n, i) => { const b = bone(n); if (b) b.quaternion.copy(state.from.q[i].clone().slerp(b.quaternion, w)); });
+    hips.position.y = THREE.MathUtils.lerp(state.from.y, hips.position.y, w);
+    // Blending bent legs can push the feet through the floor; raise the hips just enough to prevent it.
+    hips.position.y = Math.max(hips.position.y, hips.userData.baseY + hips.userData.restFootY - footY());
+  }
+}
+
+// ---------- Expressions: manual + auto blink + lip sync ----------
+let nextBlink = 2, blinkT = -1;
+function applyExpressions(dt, t) {
+  const em = vrm.expressionManager;
+  if (!em) return;
+  for (const name of Object.keys(em.expressionMap)) em.setValue(name, state.manual[name] ?? 0);
+  if (state.autoBlink && !state.manual.blink) {
+    if (t > nextBlink) { blinkT = 0; nextBlink = t + 2 + Math.random() * 3; }
+    if (blinkT >= 0) { blinkT += dt; em.setValue('blink', Math.sin(Math.min(blinkT / 0.15, 1) * Math.PI)); if (blinkT > 0.15) blinkT = -1; }
+  }
+  if (state.lipSync) {
+    const vowels = ['aa', 'ih', 'ou', 'ee', 'oh'];
+    const i = Math.floor(t * 6) % 5;
+    em.setValue(vowels[i], 0.4 + 0.6 * Math.abs(Math.sin(t * 18)));
+  }
+}
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta(), t = clock.elapsedTime;
+  if (vrm) {
+    state.actionTime += dt;
+    applyAction(state.actionTime);
+    applyExpressions(dt, t);
+    vrm.update(dt); // spring bones (hair/cloth physics), lookAt, expressions
+  }
+  plain?.mixer.update(dt);
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+// ---------- Optional in-page panel (open index.html?ui=1 in a browser) ----------
+function buildPanel(expressions, actions = ACTIONS) {
+  if (!new URLSearchParams(location.search).has('ui')) return;
+  const p = document.getElementById('panel');
+  p.style.display = 'block';
+  p.innerHTML = '<h4>Actions</h4>' + actions.map(a => `<button data-a="${a}">${a}</button>`).join('') +
+    '<h4>Toggles</h4><label>Auto blink<input type=checkbox id=bl checked></label><label>Lip sync<input type=checkbox id=ls></label>' +
+    '<h4>Expressions</h4>' + expressions.map(e => `<label>${e}<input type=range min=0 max=1 step=0.01 value=0 data-e="${e}"></label>`).join('');
+  p.querySelectorAll('[data-a]').forEach(b => b.onclick = () => vrmApi.playAction(b.dataset.a));
+  p.querySelectorAll('[data-e]').forEach(r => r.oninput = () => vrmApi.setExpression(r.dataset.e, +r.value));
+  p.querySelector('#bl').onchange = (e) => vrmApi.setAutoBlink(e.target.checked);
+  p.querySelector('#ls').onchange = (e) => vrmApi.setLipSync(e.target.checked);
+}
+</script>
+</body>
+</html>
