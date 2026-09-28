@@ -25,6 +25,7 @@ class VrmPage extends StatefulWidget {
 
 class _VrmPageState extends State<VrmPage> {
   InAppWebViewController? _web;
+  Key _webKey = UniqueKey(); // replaced to recreate the WebView after its renderer dies
   bool _loaded = false;
   bool _loading = true;
   String _title = 'Loading…';
@@ -122,6 +123,7 @@ class _VrmPageState extends State<VrmPage> {
         Expanded(
           flex: 3,
           child: InAppWebView(
+            key: _webKey,
             initialUrlRequest: URLRequest(url: WebUri('${modelServer.baseUrl}/index.html')),
             initialSettings: InAppWebViewSettings(transparentBackground: true, mediaPlaybackRequiresUserGesture: false),
             onWebViewCreated: (c) {
@@ -129,6 +131,18 @@ class _VrmPageState extends State<VrmPage> {
               c.addJavaScriptHandler(handlerName: 'vrm', callback: _onMessage);
             },
             onConsoleMessage: (_, m) => debugPrint('[web] ${m.message}'),
+            // Unhandled, a killed renderer (e.g. low memory) takes the whole app down with it.
+            // The dead WebView can't be reused, so build a new one; it reloads the default model.
+            onRenderProcessGone: (_, detail) {
+              debugPrint('WebView renderer gone (crash: ${detail.didCrash}), recreating');
+              setState(() {
+                _web = null;
+                _webKey = UniqueKey();
+                _loaded = false;
+                _loading = true;
+                _title = 'Loading…';
+              });
+            },
           ),
         ),
         if (_loading) const LinearProgressIndicator(),

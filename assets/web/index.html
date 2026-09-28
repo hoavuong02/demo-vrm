@@ -163,6 +163,43 @@ function shrinkTextures(root, max = 2048) {
   });
 }
 
+// Drops morph targets no expression drives. three.js packs every target into a Float32 texture per geometry,
+// and models ship many blendshapes their VRM expressions never use (model.vrm: 118).
+function pruneMorphTargets(vrm) {
+  const used = new Map(); // geometry -> indices bound by some expression
+  const binds = (vrm.expressionManager?.expressions ?? []).flatMap((e) => e.binds).filter((b) => b.primitives);
+  for (const b of binds) for (const m of b.primitives) {
+    if (!used.has(m.geometry)) used.set(m.geometry, new Set());
+    used.get(m.geometry).add(b.index);
+  }
+  const keep = new Map(); // geometry -> kept old indices, in order
+  vrm.scene.traverse((o) => {
+    const n = o.geometry?.morphAttributes.position?.length;
+    if (n && !keep.has(o.geometry)) keep.set(o.geometry, [...(used.get(o.geometry) ?? [])].filter((i) => i < n).sort((a, b) => a - b));
+  });
+  // A bind has one index for all its primitives, so they must all map it to the same new index.
+  const newIndex = (b) => new Set(b.primitives.map((m) => keep.get(m.geometry)?.indexOf(b.index)));
+  if (binds.some((b) => newIndex(b).size !== 1)) return;
+  for (const b of binds) b.index = [...newIndex(b)][0];
+  for (const [g, idx] of keep) for (const k of Object.keys(g.morphAttributes)) g.morphAttributes[k] = idx.map((i) => g.morphAttributes[k][i]);
+  vrm.scene.traverse((o) => { if (keep.has(o.geometry)) o.updateMorphTargets(); });
+}
+
+// Copies interleaved attributes into plain ones. InterleavedBufferAttribute.clone() does the same but reads
+// element by element through getters (model.vrm: ~6s on a Galaxy A05). Primitives sharing a buffer share the copy.
+function deinterleaver() {
+  const cache = new Map();
+  return (a) => {
+    const key = `${a.data.uuid}:${a.offset}:${a.itemSize}`;
+    if (!cache.has(key)) {
+      const { array, stride } = a.data, n = a.itemSize, out = new array.constructor(a.count * n);
+      for (let i = 0, j = a.offset; i < out.length; i += n, j += stride) for (let k = 0; k < n; k++) out[i + k] = array[j + k];
+      cache.set(key, new THREE.BufferAttribute(out, n, a.normalized));
+    }
+    return cache.get(key);
+  };
+}
+
 function loadModel(url) {
   status.textContent = 'Loading…';
   loader.load(url, (gltf) => {
@@ -174,14 +211,16 @@ function loadModel(url) {
     isVrm0 = vrm.meta?.metaVersion === '0';
     // Match Flutter, which resets its chip to idle on load; the old pose belongs to the disposed model.
     state.action = 'idle'; state.actionTime = 0; state.from = null;
+    pruneMorphTargets(vrm);
     // Primitives sharing one vertex buffer each get a morph texture sized for the whole buffer
     // (model.vrm: 11 x 40MB); trimming each to its own vertices avoids the OOM kill on 4GB phones.
-    // removeUnnecessaryVertices can't handle interleaved attributes, and clone() de-interleaves them.
+    // removeUnnecessaryVertices can't handle interleaved attributes, so de-interleave them first.
+    const flat = deinterleaver();
     gltf.scene.traverse((o) => {
       const g = o.geometry;
       if (!g) return;
-      for (const [k, a] of Object.entries(g.attributes)) if (a.isInterleavedBufferAttribute) g.setAttribute(k, a.clone());
-      for (const list of Object.values(g.morphAttributes)) list.forEach((a, i) => { if (a.isInterleavedBufferAttribute) list[i] = a.clone(); });
+      for (const [k, a] of Object.entries(g.attributes)) if (a.isInterleavedBufferAttribute) g.setAttribute(k, flat(a));
+      for (const list of Object.values(g.morphAttributes)) list.forEach((a, i) => { if (a.isInterleavedBufferAttribute) list[i] = flat(a); });
     });
     VRMUtils.removeUnnecessaryVertices(gltf.scene);
     VRMUtils.combineSkeletons(gltf.scene);

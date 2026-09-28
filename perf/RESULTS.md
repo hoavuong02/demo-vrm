@@ -47,3 +47,40 @@ Notes:
 - Real device: steady rendering holds 30fps with no stalls, and there is no GC while idle. The problem left is loading:
   `model.vrm` freezes the WebView main thread for about 8s. This is the likely cause of "not responding".
 - Emulator: GPU-bound (host GPU emulation), so model.vrm renders at ~24fps. Its CPU is much faster, so load stalls are short.
+
+## step2 (fast de-interleave, prune unused morph targets, recover from WebView renderer death)
+
+Changes:
+- De-interleave with a typed-array loop instead of `InterleavedBufferAttribute.clone()`. Load-phase timing on the SM-A057F for model.vrm:
+  parse 1.3s, `clone()` de-interleave 6.2s, `removeUnnecessaryVertices` 0.3s, shader compile ~35ms.
+  After the change, de-interleave takes 0.15s.
+- Drop morph targets that no VRM expression binds. Pixel comparison of all 12 expressions on model.vrm against the previous build: identical.
+- `onRenderProcessGone` in `lib/main.dart` builds a new WebView instead of letting Android kill the app.
+
+**SM-A057F** (Android 15, DPR 2.8125, RAM 3601.6MB) — label `step2`
+
+| Model | Load ms | Longest frame during load ms | WebGL fps | Frame p95 ms | Stalls >50ms /10s | gfxinfo janky % (legacy) | gfxinfo p90 ms | PSS MB | Graphics MB | Renderer PSS MB | GC /10s | Alive |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| model.vrm | 1386 | 218 | 29.9 | 38.3 | 1 | 99.34 (4.26) | 25 | 404.9 | 153.4 | 244.8 | 0 | true |
+| Darkness_Shibu.vrm | 1354 | 184 | 29.9 | 35.6 | 0 | 99.67 (52.79) | 26 | 416.5 | 180.8 | 287.2 | 0 | true |
+| AvatarSample_B.vrm | 1131 | 1194 | 29.9 | 39.2 | 0 | 98.03 (56.72) | 28 | 390.2 | 183.5 | 386.1 | 0 | true |
+| HairSample_Male.vrm | 1191 | 997 | 29.9 | 37.6 | 0 | 98.36 (55.08) | 29 | 392.3 | 177.9 | 392 | 0 | true |
+| Soldier.glb | 788 | 762 | 29.9 | 34.8 | 0 | 99.35 (23.45) | 17 | 280.9 | 95.3 | 409.7 | 0 | true |
+| model.vrm | 1996 | 1389 | 29.9 | 40.2 | 0 | 99.67 (20.98) | 26 | 391.4 | 149.5 | 326.9 | 0 | true |
+
+**sdk_gphone16k_x86_64** (Android 17, DPR 3, RAM 3912.3MB) — label `step2`
+
+| Model | Load ms | Longest frame during load ms | WebGL fps | Frame p95 ms | Stalls >50ms /10s | gfxinfo janky % (legacy) | gfxinfo p90 ms | PSS MB | Graphics MB | Renderer PSS MB | GC /10s | Alive |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| model.vrm | 450 | 90 | 28.3 | 45.6 | 8 | 74.74 (100) | 46 | 244.6 | 0 | 288.3 | 0 | true |
+| Darkness_Shibu.vrm | 438 | 61 | 29.5 | 37.2 | 2 | 68.01 (68.01) | 32 | 238.5 | 0 | 323.9 | 0 | true |
+| AvatarSample_B.vrm | 316 | 2489 | 28.7 | 42.4 | 7 | 79.79 (97.91) | 38 | 224.3 | 0 | 441.9 | 0 | true |
+| HairSample_Male.vrm | 373 | 2449 | 29.1 | 39 | 5 | 72.6 (78.42) | 32 | 227.5 | 0 | 439.5 | 0 | true |
+| Soldier.glb | 206 | 245 | 29.7 | 36.1 | 2 | 55.37 (34.23) | 32 | 195.3 | 0 | 459.3 | 0 | true |
+| model.vrm | 482 | 54 | 27.6 | 47.3 | 6 | 78.78 (98.92) | 48 | 251.2 | 0 | 414.6 | 0 | true |
+
+Notes:
+- Real device, model.vrm: load 7.6s to 1.4s, longest main-thread freeze 8.3s to 0.2s, Graphics 399MB to 153MB, PSS 664MB to 405MB.
+  The second model.vrm load shows a 1.4s freeze. Other VRoid models still freeze for about 1s inside `GLTFLoader` parsing.
+- Emulator numbers are noisy: host load average was 11–18 during the run. Some load entries show a longest frame
+  longer than the load itself (a long frame that started before the load).
