@@ -31,8 +31,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
 const status = document.getElementById('status');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(window.devicePixelRatio);
+// Phone screens report DPR 2.75-3.5; rendering at that density (plus MSAA) is what makes WebGL lag.
+const DPR = Math.min(window.devicePixelRatio, 1.5);
+const renderer = new THREE.WebGLRenderer({ antialias: DPR < 1.5, powerPreference: 'high-performance' });
+renderer.setPixelRatio(DPR);
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
@@ -135,16 +137,53 @@ function playClip(name) {
   plain.current = next;
 }
 
+// Downscale textures larger than max px: a 4096 texture takes 64MB of GPU memory, 2048 takes 16MB.
+function shrinkTextures(root, max = 2048) {
+  const done = new Map(); // original image -> resized canvas (textures may share an image)
+  const shrink = (tex) => {
+    const img = tex?.isTexture && tex.image;
+    if (!img?.width || Math.max(img.width, img.height) <= max) return;
+    if (!done.has(img)) {
+      const k = max / Math.max(img.width, img.height);
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      done.set(img, c);
+      img.close?.(); // free the decoded ImageBitmap
+    }
+    tex.image = done.get(img);
+    tex.needsUpdate = true;
+  };
+  root.traverse((o) => {
+    for (const m of [o.material ?? []].flat()) {
+      // MToon keeps its textures in uniforms behind prototype getters, so check both.
+      Object.values(m).forEach(shrink);
+      Object.values(m.uniforms ?? {}).forEach((u) => shrink(u?.value));
+    }
+  });
+}
+
 function loadModel(url) {
   status.textContent = 'Loading…';
   loader.load(url, (gltf) => {
     if (vrm) { scene.remove(vrm.scene); VRMUtils.deepDispose(vrm.scene); vrm = null; }
     if (plain) { scene.remove(plain.scene); VRMUtils.deepDispose(plain.scene); plain = null; }
+    shrinkTextures(gltf.scene);
     if (!gltf.userData.vrm) return showPlainGltf(gltf, url);
     vrm = gltf.userData.vrm;
     isVrm0 = vrm.meta?.metaVersion === '0';
     // Match Flutter, which resets its chip to idle on load; the old pose belongs to the disposed model.
     state.action = 'idle'; state.actionTime = 0; state.from = null;
+    // Primitives sharing one vertex buffer each get a morph texture sized for the whole buffer
+    // (model.vrm: 11 x 40MB); trimming each to its own vertices avoids the OOM kill on 4GB phones.
+    // removeUnnecessaryVertices can't handle interleaved attributes, and clone() de-interleaves them.
+    gltf.scene.traverse((o) => {
+      const g = o.geometry;
+      if (!g) return;
+      for (const [k, a] of Object.entries(g.attributes)) if (a.isInterleavedBufferAttribute) g.setAttribute(k, a.clone());
+      for (const list of Object.values(g.morphAttributes)) list.forEach((a, i) => { if (a.isInterleavedBufferAttribute) list[i] = a.clone(); });
+    });
+    VRMUtils.removeUnnecessaryVertices(gltf.scene);
     VRMUtils.combineSkeletons(gltf.scene);
     VRMUtils.rotateVRM0(vrm); // VRM 0.x faces -Z, turn it toward camera
     scene.add(vrm.scene);
@@ -297,9 +336,15 @@ function applyExpressions(dt, t) {
   }
 }
 
+// Cap at 30fps: halves GPU work and the per-frame buffers the Android platform view allocates.
+const FRAME = 1 / 30;
 const clock = new THREE.Clock();
-renderer.setAnimationLoop(() => {
-  const dt = clock.getDelta(), t = clock.elapsedTime;
+let acc = 0;
+function loop() {
+  acc += clock.getDelta();
+  if (acc < FRAME * 0.9) return; // tolerance so rAF jitter on 60Hz screens doesn't drop us to 20fps
+  const dt = acc, t = clock.elapsedTime;
+  acc = 0;
   if (vrm) {
     state.actionTime += dt;
     applyAction(state.actionTime);
@@ -309,6 +354,12 @@ renderer.setAnimationLoop(() => {
   plain?.mixer.update(dt);
   controls.update();
   renderer.render(scene, camera);
+}
+renderer.setAnimationLoop(loop);
+// Stop rendering while the app/page is in the background.
+document.addEventListener('visibilitychange', () => {
+  clock.getDelta(); acc = 0; // drop the time spent hidden
+  renderer.setAnimationLoop(document.hidden ? null : loop);
 });
 
 // ---------- Optional in-page panel (open index.html?ui=1 in a browser) ----------

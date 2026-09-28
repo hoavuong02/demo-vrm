@@ -1,0 +1,232 @@
+{
+  "label": "baseline",
+  "serial": "emulator-5554",
+  "model": "sdk_gphone16k_x86_64",
+  "android": "17",
+  "dpr": 3,
+  "ramMB": 3912.3,
+  "steps": [
+    {
+      "url": "model.vrm",
+      "load": {
+        "ms": 1546,
+        "parseMs": 1332,
+        "result": "loaded",
+        "longFrames": 2,
+        "longFrameTotalMs": 147,
+        "longestFrameMs": 85
+      },
+      "gcDuringLoad": 0,
+      "webgl": {
+        "fps": 23.7,
+        "frameP50": 40.1,
+        "frameP95": 54.7,
+        "frameMax": 118.7,
+        "stallsOver50ms": 31,
+        "longFrames": 5
+      },
+      "gfx": {
+        "frames": 243,
+        "jankyPct": 84.77,
+        "jankyLegacyPct": 100,
+        "p50": 46,
+        "p90": 57,
+        "p95": 61,
+        "p99": 105
+      },
+      "gcPer10s": 0,
+      "mem": {
+        "pssMB": 244.4,
+        "graphicsMB": 0,
+        "nativeHeapMB": 83.8,
+        "rendererPssMB": 359.6
+      },
+      "alive": true
+    },
+    {
+      "url": "models/Darkness_Shibu.vrm",
+      "load": {
+        "ms": 548,
+        "parseMs": 541,
+        "result": "loaded",
+        "longFrames": 3,
+        "longFrameTotalMs": 219,
+        "longestFrameMs": 83
+      },
+      "gcDuringLoad": 0,
+      "webgl": {
+        "fps": 28.6,
+        "frameP50": 33.8,
+        "frameP95": 44.2,
+        "frameMax": 91.9,
+        "stallsOver50ms": 7,
+        "longFrames": 3
+      },
+      "gfx": {
+        "frames": 288,
+        "jankyPct": 73.26,
+        "jankyLegacyPct": 98.61,
+        "p50": 32,
+        "p90": 42,
+        "p95": 46,
+        "p99": 81
+      },
+      "gcPer10s": 0,
+      "mem": {
+        "pssMB": 255.1,
+        "graphicsMB": 0,
+        "nativeHeapMB": 79.2,
+        "rendererPssMB": 318.4
+      },
+      "alive": true
+    },
+    {
+      "url": "models/AvatarSample_B.vrm",
+      "load": {
+        "ms": 362,
+        "parseMs": 324,
+        "result": "loaded",
+        "longFrames": 2,
+        "longFrameTotalMs": 116,
+        "longestFrameMs": 60
+      },
+      "gcDuringLoad": 0,
+      "webgl": {
+        "fps": 28.2,
+        "frameP50": 33.9,
+        "frameP95": 42.6,
+        "frameMax": 105.8,
+        "stallsOver50ms": 7,
+        "longFrames": 5
+      },
+      "gfx": {
+        "frames": 284,
+        "jankyPct": 76.76,
+        "jankyLegacyPct": 99.65,
+        "p50": 36,
+        "p90": 46,
+        "p95": 48,
+        "p99": 101
+      },
+      "gcPer10s": 0,
+      "mem": {
+        "pssMB": 236.7,
+        "graphicsMB": 0,
+        "nativeHeapMB": 66.8,
+        "rendererPssMB": 456.5
+      },
+      "alive": true
+    },
+    {
+      "url": "models/HairSample_Male.vrm",
+      "load": {
+        "ms": 545,
+        "parseMs": 528,
+        "result": "loaded",
+        "longFrames": 1,
+        "longFrameTotalMs": 74,
+        "longestFrameMs": 74
+      },
+      "gcDuringLoad": 0,
+      "webgl": {
+        "fps": 28.7,
+        "frameP50": 33.7,
+        "frameP95": 43,
+        "frameMax": 79.1,
+        "stallsOver50ms": 5,
+        "longFrames": 2
+      },
+      "gfx": {
+        "frames": 291,
+        "jankyPct": 73.88,
+        "jankyLegacyPct": 93.47,
+        "p50": 34,
+        "p90": 42,
+        "p95": 48,
+        "p99": 93
+      },
+      "gcPer10s": 0,
+      "mem": {
+        "pssMB": 240.3,
+        "graphicsMB": 0,
+        "nativeHeapMB": 69.2,
+        "rendererPssMB": 451.8
+      },
+      "alive": true
+    },
+    {
+      "url": "models/Soldier.glb",
+      "load": {
+        "ms": 216,
+        "parseMs": 208,
+        "result": "loaded",
+        "longFrames": 2,
+        "longFrameTotalMs": 195,
+        "longestFrameMs": 145
+      },
+      "gcDuringLoad": 0,
+      "webgl": {
+        "fps": 29.3,
+        "frameP50": 33.4,
+        "frameP95": 39.3,
+        "frameMax": 64.9,
+        "stallsOver50ms": 4,
+        "longFrames": 2
+      },
+      "gfx": {
+        "frames": 295,
+        "jankyPct": 68.14,
+        "jankyLegacyPct": 63.73,
+        "p50": 30,
+        "p90": 32,
+        "p95": 34,
+        "p99": 77
+      },
+      "gcPer10s": 0,
+      "mem": {
+        "pssMB": 206.7,
+        "graphicsMB": 0,
+        "nativeHeapMB": 50.2,
+        "rendererPssMB": 467.7
+      },
+      "alive": true
+    },
+    {
+      "url": "model.vrm",
+      "load": {
+        "ms": 1788,
+        "parseMs": 1316,
+        "result": "loaded",
+        "longFrames": 2,
+        "longFrameTotalMs": 134,
+        "longestFrameMs": 82
+      },
+      "gcDuringLoad": 1,
+      "webgl": {
+        "fps": 23.8,
+        "frameP50": 39.4,
+        "frameP95": 59.5,
+        "frameMax": 96.9,
+        "stallsOver50ms": 40,
+        "longFrames": 15
+      },
+      "gfx": {
+        "frames": 242,
+        "jankyPct": 92.56,
+        "jankyLegacyPct": 100,
+        "p50": 48,
+        "p90": 61,
+        "p95": 69,
+        "p99": 97
+      },
+      "gcPer10s": 0,
+      "mem": {
+        "pssMB": 295.4,
+        "graphicsMB": 0,
+        "nativeHeapMB": 123.5,
+        "rendererPssMB": 768.8
+      },
+      "alive": true
+    }
+  ]
+}
