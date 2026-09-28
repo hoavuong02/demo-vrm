@@ -264,6 +264,7 @@ window.vrmApi = {
   setLipSync(v) { state.lipSync = v; },
   setLookAt(v) { state.lookAtCamera = v; if (vrm?.lookAt) vrm.lookAt.target = v ? camera : null; },
   resetCamera() { if (home) { camera.position.copy(home.pos); controls.target.copy(home.target); } },
+  setPaused(v) { paused = v; updateLoop(); },
 };
 
 // ---------- Body actions (procedural, on humanoid bones) ----------
@@ -394,12 +395,15 @@ function loop() {
   controls.update();
   renderer.render(scene, camera);
 }
-renderer.setAnimationLoop(loop);
-// Stop rendering while the app/page is in the background.
-document.addEventListener('visibilitychange', () => {
-  clock.getDelta(); acc = 0; // drop the time spent hidden
-  renderer.setAnimationLoop(document.hidden ? null : loop);
-});
+// Stop rendering while the page is hidden or Flutter reports the app is backgrounded (setPaused);
+// Android WebView doesn't reliably fire visibilitychange on its own.
+let paused = false;
+function updateLoop() {
+  clock.getDelta(); acc = 0; // drop the time spent stopped
+  renderer.setAnimationLoop(paused || document.hidden ? null : loop);
+}
+updateLoop();
+document.addEventListener('visibilitychange', updateLoop);
 
 // ---------- Optional in-page panel (open index.html?ui=1 in a browser) ----------
 function buildPanel(expressions, actions = ACTIONS) {

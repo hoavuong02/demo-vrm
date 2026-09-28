@@ -23,7 +23,7 @@ class VrmPage extends StatefulWidget {
   State<VrmPage> createState() => _VrmPageState();
 }
 
-class _VrmPageState extends State<VrmPage> {
+class _VrmPageState extends State<VrmPage> with WidgetsBindingObserver {
   InAppWebViewController? _web;
   Key _webKey = UniqueKey(); // replaced to recreate the WebView after its renderer dies
   bool _loaded = false;
@@ -39,6 +39,7 @@ class _VrmPageState extends State<VrmPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     AssetManifest.loadFromAssetBundle(rootBundle).then((m) {
       const prefix = 'assets/web/';
       setState(() => _bundled = m
@@ -48,6 +49,18 @@ class _VrmPageState extends State<VrmPage> {
           .toList()
         ..sort());
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Stop the render loop while the app isn't visible; `inactive` still shows the viewer (e.g. split screen).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _js('setPaused(${state != AppLifecycleState.resumed && state != AppLifecycleState.inactive})');
   }
 
   Future<void> _loadModel(String url) async {
